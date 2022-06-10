@@ -8,12 +8,19 @@ from colorama import Fore
 from functools import reduce
 from github import Github, UnknownObjectException, NamedUser
 
-def extract_reviewers(pull_request, extract_weight):
+def extract_reviewers(pull_request, extract_weight, window=None):
     sources = [
-        set([rev.user for rev in pull_request.get_reviews() if rev.state in ['APPROVED', 'REQUEST_CHANGES']]),
-        set([rev for rev in pull_request.get_review_requests()[0] if isinstance(rev, NamedUser.NamedUser)]),
-        set([rev for rev in pull_request.get_review_requests()[1] if isinstance(rev, NamedUser.NamedUser)])
+        set([rev.user for rev in pull_request.get_reviews()]), # if rev.state in ['APPROVED', 'REQUEST_CHANGES']]),
+#         set([rev for rev in pull_request.get_review_requests()[0] if isinstance(rev, NamedUser.NamedUser)]),
+#         set([rev for rev in pull_request.get_review_requests()[1] if isinstance(rev, NamedUser.NamedUser)])
     ]
+    
+    def in_window(review):
+        if not window:
+            return True
+        return review.submitted_at >= window[0] and review.submitted_at < window[1]
+    
+    users = [review.user for review in pull_request.get_reviews() if in_window(review)]
     points = extract_weight(pull_request)
     return {user: points for user in reduce(set.union, sources)}
 
@@ -56,6 +63,16 @@ def time_condition(pull_request, condition):
         return False
 
     return pull_request.created_at > datetime.now() - delta
+    
+
+def in_comment_window(pr, window):
+    if request.created_at >= window[1]:
+        return False
+    if not request.closed_at:
+        return True
+    if request.closed_at < window[0]:
+        return False
+    return False
 
 
 @click.group()
@@ -68,26 +85,34 @@ def cli(token):
 
 @cli.command()
 @click.argument('name')
-@click.option('--weight-method', '-w', default='changes',
+@click.option('--weight-method', '-w', default='simple',
               type=click.Choice(['simple', 'changes']),
               help='Select method of calculating weights of pull requests.')
 @click.option('--label', '-l', 'label_list', multiple=True)
-@click.option('--state', default='open')
+@click.option('--state', default='all')
+@click.option('--branch', '-b', default=None)
 @click.option('--younger-than', '-y', 'younger_than',
               help='Take into account only pull requests younger than.',
               type=click.Choice(['week', 'month', 'year', 'all']), default='month')
-def show(name, label_list, state, weight_method, younger_than):
+@click.option('--window', '-w', 'window', nargs=2, type=click.DateTime(), default=None)
+def show(name, label_list, state, weight_method, younger_than, branch, window):
     """Display reviewers stats for given repository"""
     g = Github(cli.token)
 
     try:
-        pull_requests = g.get_repo(name).get_pulls(state)
+        kw = {}
+        if branch:
+            kw['base'] = branch
+        pull_requests = g.get_repo(name).get_pulls(state, **kw)
     except UnknownObjectException:
         raise click.ClickException('Repository not found!')
 
     # filter by creation date
     pull_requests = [request for request in pull_requests if time_condition(request, younger_than)]
+    if window:
+        pull_requests = [request for request in pull_requests if (((not request.closed_at) or request.closed_at > window[0]) and request.created_at < window[1])]
     pull_requests_length = len(pull_requests)
+    print(pull_requests_length, 'requests found')
 
     review_counter = Counter()
     creator_counter = Counter()
@@ -102,11 +127,12 @@ def show(name, label_list, state, weight_method, younger_than):
         pull_requests = [p for p in pull_requests if
                          label_set <= set(l.name for l in p.labels)]
         pull_requests_length = len(pull_requests)
-
+    
+        
     with click.progressbar(pull_requests, length=pull_requests_length,
                            show_eta=False, label='Processing Pull Requests') as pull_requests_bar:
         for pull in pull_requests_bar:
-            review_counter.update(extract_reviewers(pull, extract_weight))
+            review_counter.update(extract_reviewers(pull, extract_weight, window=window))
             creator_counter.update({pull.user: extract_weight(pull)})
     display_user_counter(review_counter, 'Reviewers ranking:')
     display_user_counter(creator_counter, 'Creators ranking:')
