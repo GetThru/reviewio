@@ -13,6 +13,14 @@ Install and update using [pip](https://pip.pypa.io/en/stable/quickstart/):
 $ pip install reviewio
 ```
 
+Or to run a specific branch (for GetThru, use branch `monthly-code-review`):
+
+```
+$ git clone <path-to-reviewio-fork-repo>
+$ cd reviewio
+$ pip install -e ./
+```
+
 Reviewio supports Python 3.4 and newer.
 
 ### Local and development
@@ -30,6 +38,12 @@ This tool uses `PyGithub` library for communication with GitHub. Authentication 
 
 ```
 export GITHUB_TOKEN='{TOKEN}'
+```
+
+## GetThru Usage
+
+```
+$ reviewio show GetThru/monorepo -b main --window 2022-05-01 2022-06-01
 ```
 
 ## Usage
